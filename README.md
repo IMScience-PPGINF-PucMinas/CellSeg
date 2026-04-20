@@ -18,7 +18,7 @@ It is a practical research repo (scripts + outputs), not a packaged library.
 - `compare_segmentation_masks_diff.py`: compare two instance label maps and export difference images/stats
 - `run_monuseg_cellpose_nuclick.py`: MoNuSeg experiment (Cellpose centroids -> NuClick)
 - `run_monuseg_cellpose_sicle.py`: MoNuSeg experiment (Cellpose crops -> SICLE)
-- `run_dataset_gio_cellpose_nuclei_masked.py`: dataset_gio processing with optional FUNDO exclusion masks
+
 
 Common output folders in this repo:
 
