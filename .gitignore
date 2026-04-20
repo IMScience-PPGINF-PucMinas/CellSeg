@@ -80,6 +80,16 @@ cellpose_to_idisf_out/
 # cellpose/cpsam
 # **/cpsam
 
+# --- Large data artifacts (avoid push failures) ---
+*.zip
+*.tiff
+*.svs
+*.npz
+
+# Additional generated folders in this repo
+remix_out/
+compare_step4_vs_fused/
+
 # --- Logs & temp ---
 *.log
 tmp/
