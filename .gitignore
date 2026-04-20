@@ -51,14 +51,14 @@ ENV/
 Thumbs.db
 
 # --- Pipeline outputs (scripts in repo root; adjust names if you use others) ---
-cp_flow_out/
-compare_out/
-cellpose_remix_out/
-reproduce_cellpose_out/
-mask_compare_out/
-cellpose_pipeline_demo_out/
-cellpose_idisf_out/
-cellpose_to_idisf_out/
+# cp_flow_out/
+# compare_out/
+# cellpose_remix_out/
+# reproduce_cellpose_out/
+# mask_compare_out/
+# cellpose_pipeline_demo_out/
+# cellpose_idisf_out/
+# cellpose_to_idisf_out/
 
 # Generic output folders you might create
 *_pipeline_out/
@@ -87,8 +87,8 @@ cellpose_to_idisf_out/
 *.npz
 
 # Additional generated folders in this repo
-remix_out/
-compare_step4_vs_fused/
+# remix_out/
+# compare_step4_vs_fused/
 
 # --- Logs & temp ---
 *.log
