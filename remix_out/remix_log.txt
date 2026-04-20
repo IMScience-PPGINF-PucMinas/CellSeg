@@ -1,0 +1,9 @@
+source_npz: cp_flow_out/step03_dP_cellprob.npz
+dP shape: (2, 1000, 2000)
+cellprob original range: [-10.18750, 8.25000]
+cellprob modified range: [0.00004, 0.99974]
+sigmoid=True scale=1.0 offset=0.0
+multiply=None
+cellprob_threshold=0.25 flow_threshold=0.4
+niter=200
+mask max label: 665

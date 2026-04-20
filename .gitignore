@@ -1,0 +1,87 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+pip-log.txt
+pip-delete-this-directory.txt
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+*.cover
+.hypothesis/
+.tox/
+.nox/
+venv/
+.venv/
+env/
+ENV/
+
+# --- Jupyter ---
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# --- Editors / OS ---
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# --- Pipeline outputs (scripts in repo root; adjust names if you use others) ---
+cp_flow_out/
+compare_out/
+cellpose_remix_out/
+reproduce_cellpose_out/
+mask_compare_out/
+cellpose_pipeline_demo_out/
+cellpose_idisf_out/
+cellpose_to_idisf_out/
+
+# Generic output folders you might create
+*_pipeline_out/
+*_out_run/
+
+# Ad-hoc generated previews at repo root (uncomment if you never commit these)
+# /act_out*.png
+# /act_out*.npy
+# /cellprob_heatmap.png
+
+# --- Large / raw imaging (uncomment if you keep big data under doutorado) ---
+# *.svs
+# *.nd2
+# *.scn
+# *.mrxs
+# *.bif
+
+# --- Cellpose local model file (if you copy weights into the tree) ---
+# cellpose/cpsam
+# **/cpsam
+
+# --- Logs & temp ---
+*.log
+tmp/
+temp/
+.cache/

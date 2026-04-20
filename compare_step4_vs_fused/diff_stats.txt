@@ -1,0 +1,20 @@
+mask_a: cp_flow_out/step04_masks_uint16.npy
+mask_b: cp_flow_out/step05g_masks_from_fused_cellprob_uint16.npy
+
+Pixel counts
+------------
+  pixels_total: 2000000
+  pixels_match: 1742078
+  pixels_differ: 257922
+  both_background: 1702222
+  only_in_a_foreground: 26082
+  only_in_b_foreground: 9431
+  both_foreground_different_label: 222409
+  fraction_differing_pixels: 12.8961%
+
+Legend (diff_rgb_explained.png)
+    -------------------------------
+    Dark gray   : same label in A and B (including both background)
+    Red-ish     : foreground in A only (missing in B)
+    Blue-ish    : foreground in B only (missing in A)
+    Yellow      : both maps have a non-zero label but labels differ (split/merge/shift)
