@@ -66,7 +66,7 @@ IDISF_C1_DEFAULT = 0.7
 IDISF_C2_DEFAULT = 0.8
 UOIFT_POLARITY_DEFAULT = 0.5
 UOIFT_SPSIZE_DEFAULT = 100
-SICLE_N0_DEFAULT = 1000
+SICLE_N0_DEFAULT = 500
 SICLE_NF_DEFAULT = 2  # target 2 superpixels
 SICLE_ALPHA_DEFAULT = 0.9
 SICLE_MAXITERS_DEFAULT = 22
@@ -114,12 +114,23 @@ def find_sicle_binary() -> Path:
         if p.exists():
             return p
         raise FileNotFoundError(f"SICLE_BIN={env_path} does not exist")
-    candidates = [
-        ROOT / "SICLE" / "bin" / "RunSICLE",
-        ROOT / "PIPELINE_UOIFT_SICLE" / "uoift_sicle" / "SICLE" / "bin" / "RunSICLE",
-        Path.home() / "SICLE" / "bin" / "RunSICLE",
-        Path("/usr/local/bin/RunSICLE"),
-    ]
+    candidates: list[Path] = []
+    _up = ROOT.parent
+    if (_up / "cellpose").is_dir():
+        candidates.extend(
+            [
+                _up / "SICLE" / "bin" / "RunSICLE",
+                _up / "PIPELINE_UOIFT_SICLE" / "uoift_sicle" / "SICLE" / "bin" / "RunSICLE",
+            ]
+        )
+    candidates.extend(
+        [
+            ROOT / "SICLE" / "bin" / "RunSICLE",
+            ROOT / "PIPELINE_UOIFT_SICLE" / "uoift_sicle" / "SICLE" / "bin" / "RunSICLE",
+            Path.home() / "SICLE" / "bin" / "RunSICLE",
+            Path("/usr/local/bin/RunSICLE"),
+        ]
+    )
     for path in candidates:
         if path.exists():
             return path

@@ -16,6 +16,8 @@ It is a practical research repo (scripts + outputs), not a packaged library.
 - `cellpose_to_idisf_pipeline.py`: Cellpose -> crop each cell -> build scribbles -> run selected segmenter
 - `cellpose_masks_modified_cellprob.py`: remix/modify masks using cellprob-related logic
 - `compare_segmentation_masks_diff.py`: compare two instance label maps and export difference images/stats
+- `percell_sicle_cellprob_pipeline.py`: per-cell bounding-box SICLE on cropped `cellprob` saliency → merged mask (`step03` + `step04` from `cp_flow_out`)
+- `mask_outline_overlay.py`: border-only overlay (TIFF/SVS + mask `.npy`/`.npz`) without re-running segmentation
 - `run_monuseg_cellpose_nuclick.py`: MoNuSeg experiment (Cellpose centroids -> NuClick)
 - `run_monuseg_cellpose_sicle.py`: MoNuSeg experiment (Cellpose crops -> SICLE)
 
@@ -98,6 +100,25 @@ python compare_segmentation_masks_diff.py \
   --mask-b remix_out/remix_arrays.npz \
   -o compare_out \
   --also-save-diff-only-rgb
+```
+
+### 4) Per-cell SICLE on `cellprob` (bbox + merged mask)
+
+Requires `cp_flow_out/step03_dP_cellprob.npz` and `step04_masks_uint16.npy`. From this folder, point `PYTHONPATH` at the repo’s Cellpose package (sibling of `new_pipeline/`):
+
+```bash
+PYTHONPATH=../cellpose python percell_sicle_cellprob_pipeline.py \
+  --from-dir ./cp_flow_out -o ./percell_sicle_out \
+  --image ../GR07-1.svs_slice1.tiff
+```
+
+### 5) Border-only overlay (TIFF / SVS + mask file)
+
+```bash
+PYTHONPATH=../cellpose python mask_outline_overlay.py \
+  --image ../data/my_slice.tif \
+  --masks ./cp_flow_out/step04_masks_uint16.npy \
+  -o ./viz/step04_outline.png
 ```
 
 ## Notes
