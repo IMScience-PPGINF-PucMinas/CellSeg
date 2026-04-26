@@ -1,7 +1,8 @@
-from_dir: /home/lacerda/doutorado/new_pipeline/cp_flow_out
+from_dir: /home/ubuntu/Documents/Doutorado/Tese/CellSeg/cp_flow_out
 cells: 661
 margin: 8
 fg_erosion_pixels: 0
+saliency_threshold: 0.1
 sicle preset: irregular conn=fmax crit=minsc
 
 label 1: bbox=(0,28,0,16) placed_pixels=106
@@ -40,7 +41,7 @@ label 33: bbox=(12,52,1460,1500) placed_pixels=425
 label 34: bbox=(15,62,1093,1129) placed_pixels=496
 label 35: bbox=(16,62,961,1008) placed_pixels=570
 label 36: bbox=(17,74,246,284) placed_pixels=717
-label 37: bbox=(17,59,1387,1418) placed_pixels=308
+label 37: bbox=(17,59,1387,1418) placed_pixels=203
 label 38: bbox=(18,56,1401,1435) placed_pixels=276
 label 39: bbox=(21,75,1827,1865) placed_pixels=672
 label 40: bbox=(22,61,1320,1356) placed_pixels=321
@@ -299,7 +300,7 @@ label 292: bbox=(348,389,444,488) placed_pixels=395
 label 293: bbox=(350,392,1713,1759) placed_pixels=515
 label 294: bbox=(351,401,813,847) placed_pixels=464
 label 295: bbox=(351,397,1965,2000) placed_pixels=516
-label 296: bbox=(355,405,506,545) placed_pixels=614
+label 296: bbox=(355,405,506,545) placed_pixels=622
 label 297: bbox=(355,391,550,589) placed_pixels=246
 label 298: bbox=(357,384,744,773) placed_pixels=79
 label 299: bbox=(358,405,894,941) placed_pixels=739
@@ -318,7 +319,7 @@ label 311: bbox=(374,411,1140,1169) placed_pixels=199
 label 312: bbox=(377,411,1217,1246) placed_pixels=180
 label 313: bbox=(380,416,1887,1924) placed_pixels=272
 label 314: bbox=(381,436,491,529) placed_pixels=627
-label 315: bbox=(381,428,911,951) placed_pixels=548
+label 315: bbox=(381,428,911,951) placed_pixels=511
 label 316: bbox=(383,428,53,91) placed_pixels=481
 label 317: bbox=(383,420,999,1033) placed_pixels=273
 label 318: bbox=(384,436,594,639) placed_pixels=819
@@ -388,7 +389,7 @@ label 381: bbox=(473,509,1189,1229) placed_pixels=367
 label 382: bbox=(473,519,1245,1287) placed_pixels=586
 label 383: bbox=(474,515,778,816) placed_pixels=441
 label 384: bbox=(480,519,512,560) placed_pixels=547
-label 385: bbox=(480,533,1207,1252) placed_pixels=540
+label 385: bbox=(480,533,1207,1252) placed_pixels=583
 label 386: bbox=(481,521,8,37) placed_pixels=233
 label 387: bbox=(481,519,63,95) placed_pixels=204
 label 388: bbox=(481,529,596,634) placed_pixels=478
@@ -451,7 +452,7 @@ label 444: bbox=(589,637,1078,1137) placed_pixels=783
 label 445: bbox=(591,629,1172,1211) placed_pixels=255
 label 446: bbox=(592,636,61,99) placed_pixels=477
 label 447: bbox=(592,634,1049,1087) placed_pixels=399
-label 448: bbox=(594,650,255,304) placed_pixels=548
+label 448: bbox=(594,650,255,304) placed_pixels=553
 label 449: bbox=(594,640,685,719) placed_pixels=412
 label 450: bbox=(598,638,901,942) placed_pixels=467
 label 451: bbox=(599,643,1143,1195) placed_pixels=539
@@ -510,7 +511,7 @@ label 503: bbox=(704,775,1604,1646) placed_pixels=802
 label 504: bbox=(705,745,735,768) placed_pixels=251
 label 505: bbox=(707,745,108,145) placed_pixels=370
 label 506: bbox=(707,745,130,171) placed_pixels=404
-label 507: bbox=(708,779,362,414) placed_pixels=1010
+label 507: bbox=(708,779,362,414) placed_pixels=1147
 label 508: bbox=(709,747,1590,1622) placed_pixels=274
 label 509: bbox=(711,771,1761,1814) placed_pixels=1208
 label 510: bbox=(712,751,961,991) placed_pixels=259
@@ -536,7 +537,7 @@ label 529: bbox=(743,790,295,350) placed_pixels=652
 label 530: bbox=(748,803,789,840) placed_pixels=1044
 label 531: bbox=(748,790,1659,1698) placed_pixels=407
 label 532: bbox=(751,795,1119,1170) placed_pixels=424
-label 533: bbox=(752,809,1978,2000) placed_pixels=403
+label 533: bbox=(752,809,1978,2000) placed_pixels=442
 label 534: bbox=(753,785,1684,1733) placed_pixels=395
 label 535: bbox=(754,788,1035,1089) placed_pixels=505
 label 536: bbox=(756,779,692,749) placed_pixels=196
@@ -601,7 +602,7 @@ label 594: bbox=(863,904,1888,1928) placed_pixels=330
 label 595: bbox=(864,908,1348,1386) placed_pixels=477
 label 596: bbox=(867,909,574,612) placed_pixels=392
 label 597: bbox=(868,910,754,802) placed_pixels=300
-label 598: bbox=(869,950,1787,1829) placed_pixels=946
+label 598: bbox=(869,950,1787,1829) placed_pixels=1012
 label 599: bbox=(870,925,1830,1867) placed_pixels=540
 label 600: bbox=(871,901,300,355) placed_pixels=375
 label 601: bbox=(874,912,874,920) placed_pixels=429
@@ -613,7 +614,7 @@ label 606: bbox=(880,930,1448,1482) placed_pixels=519
 label 607: bbox=(882,908,1378,1403) placed_pixels=68
 label 608: bbox=(886,935,1379,1419) placed_pixels=493
 label 609: bbox=(888,940,1729,1765) placed_pixels=536
-label 610: bbox=(888,929,1888,1935) placed_pixels=136
+label 610: bbox=(888,929,1888,1935) placed_pixels=254
 label 611: bbox=(892,939,1069,1109) placed_pixels=582
 label 612: bbox=(894,945,12,51) placed_pixels=600
 label 613: bbox=(895,956,1486,1533) placed_pixels=996

@@ -90,6 +90,16 @@ def cellprob_crop_to_saliency_u8(cellprob_crop: "np.ndarray") -> "np.ndarray":
     return (sal * 255.0).astype(np.uint8)
 
 
+def apply_saliency_threshold_u8(sal_u8: "np.ndarray", thr01: float) -> "np.ndarray":
+    """Threshold saliency in [0,1]: values below threshold become 0."""
+    import numpy as np
+
+    s = np.asarray(sal_u8, dtype=np.uint8).copy()
+    t = int(round(float(thr01) * 255.0))
+    s[s < t] = 0
+    return s
+
+
 def bbox_for_label(
     masks: "np.ndarray", label: int, margin: int, h: int, w: int
 ) -> tuple[int, int, int, int]:
@@ -204,6 +214,29 @@ def _write_ovlay_labels_pgm(merged: "np.ndarray", path: Path) -> None:
     Image.fromarray(np.asarray(merged, dtype=np.uint8), mode="L").save(path)
 
 
+def _write_percell_debug_outputs(
+    cell_dir: Path,
+    input_crop_rgb: "np.ndarray | None",
+    sal_u8: "np.ndarray",
+    output_in_cell: "np.ndarray",
+) -> None:
+    """Write per-cell debug assets: input image, saliency map, and output-in-cell mask."""
+    import numpy as np
+    from PIL import Image
+
+    cell_dir.mkdir(parents=True, exist_ok=True)
+    if input_crop_rgb is None:
+        # Fallback when no --image is provided: visualize saliency as gray RGB.
+        input_crop_rgb = np.stack([sal_u8, sal_u8, sal_u8], axis=-1)
+    input_u8 = np.asarray(input_crop_rgb[..., :3], dtype=np.uint8)
+    sal_u8 = np.asarray(sal_u8, dtype=np.uint8)
+    out_u8 = (np.asarray(output_in_cell, dtype=bool).astype(np.uint8) * 255)
+
+    Image.fromarray(input_u8).save(cell_dir / "input_image.png")
+    Image.fromarray(sal_u8, mode="L").save(cell_dir / "saliency_map.png")
+    Image.fromarray(out_u8, mode="L").save(cell_dir / "output_in_cell.png")
+
+
 def main() -> int:
     import numpy as np
     from cellpose import plot
@@ -259,6 +292,15 @@ def main() -> int:
     p.add_argument("--sicle-irreg", type=float, default=SICLE_IRREG_DEFAULT)
     p.add_argument("--sicle-adhr", type=int, default=SICLE_ADHR_DEFAULT)
     p.add_argument(
+        "--saliency-threshold",
+        type=float,
+        default=0.3,
+        help=(
+            "Threshold in [0,1] applied to per-cell saliency before SICLE "
+            "(values below threshold are set to 0). Default: 0.3"
+        ),
+    )
+    p.add_argument(
         "--run-ovlay-borders",
         action="store_true",
         help=(
@@ -276,15 +318,32 @@ def main() -> int:
         raise SystemExit("--overlay-border-thickness must be >= 1")
     if args.fg_erosion_pixels < 0:
         raise SystemExit("--fg-erosion-pixels must be >= 0")
+    if not (0.0 <= args.saliency_threshold <= 1.0):
+        raise SystemExit("--saliency-threshold must be in [0,1]")
 
     from_dir = Path(args.from_dir)
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    percell_dir = out_dir / "percell_cell_outputs"
+    percell_dir.mkdir(parents=True, exist_ok=True)
 
     cellprob, masks = load_cellprob_masks(from_dir)
     h, w = cellprob.shape
     if masks.shape != (h, w):
         raise SystemExit(f"shape mismatch cellprob {cellprob.shape} vs masks {masks.shape}")
+
+    img_rgb_resized = None
+    if args.image:
+        from cellpose import io
+
+        img = io.imread(args.image)
+        if img.ndim == 2:
+            img = np.stack([img, img, img], axis=-1)
+        if img.shape[0] != h or img.shape[1] != w:
+            import cv2
+
+            img = cv2.resize(img, (w, h), interpolation=cv2.INTER_LINEAR)
+        img_rgb_resized = np.asarray(img[..., :3], dtype=np.uint8)
 
     sicle_bin = find_sicle_binary()
     conn_opt, crit_opt = resolve_sicle_path_cost(
@@ -301,20 +360,25 @@ def main() -> int:
             r0, r1, c0, c1 = bbox_for_label(masks, lab, args.margin, h, w)
             crop_cp = cellprob[r0:r1, c0:c1]
             crop_m = (masks[r0:r1, c0:c1] == lab).astype(np.uint8)
+            sal_u8 = cellprob_crop_to_saliency_u8(crop_cp)
+            sal_u8 = apply_saliency_threshold_u8(sal_u8, args.saliency_threshold)
+            crop_input = None if img_rgb_resized is None else img_rgb_resized[r0:r1, c0:c1]
             area = int(crop_m.sum())
+            name = f"cell_{lab:05d}"
+            output_in_cell = crop_m.astype(bool)
             if area < args.min_cell_area:
-                merged[r0:r1, c0:c1][crop_m.astype(bool)] = lab
+                merged[r0:r1, c0:c1][output_in_cell] = lab
                 meta.append(f"label {lab}: area={area} < min_cell_area, kept Cellpose mask")
+                _write_percell_debug_outputs(percell_dir / name, crop_input, sal_u8, output_in_cell)
                 continue
 
-            sal_u8 = cellprob_crop_to_saliency_u8(crop_cp)
             fg = fg_scribble_coords(crop_m.astype(bool), erosion_pixels=args.fg_erosion_pixels)
             if not fg:
-                merged[r0:r1, c0:c1][crop_m.astype(bool)] = lab
+                merged[r0:r1, c0:c1][output_in_cell] = lab
                 meta.append(f"label {lab}: no fg seeds, kept Cellpose mask")
+                _write_percell_debug_outputs(percell_dir / name, crop_input, sal_u8, output_in_cell)
                 continue
 
-            name = f"cell_{lab:05d}"
             try:
                 sicle_lbl = run_sicle_on_crop(
                     sal_u8,
@@ -332,14 +396,18 @@ def main() -> int:
                     crit_opt=crit_opt,
                 )
             except Exception as e:
-                merged[r0:r1, c0:c1][crop_m.astype(bool)] = lab
+                merged[r0:r1, c0:c1][output_in_cell] = lab
                 meta.append(f"label {lab}: SICLE failed ({e}), kept Cellpose mask")
+                _write_percell_debug_outputs(percell_dir / name, crop_input, sal_u8, output_in_cell)
                 continue
 
             obj = sicle_lbl == 1
-            place = obj & crop_m.astype(bool)
-            merged[r0:r1, c0:c1][place] = lab
-            meta.append(f"label {lab}: bbox=({r0},{r1},{c0},{c1}) placed_pixels={int(place.sum())}")
+            output_in_cell = obj & crop_m.astype(bool)
+            merged[r0:r1, c0:c1][output_in_cell] = lab
+            meta.append(
+                f"label {lab}: bbox=({r0},{r1},{c0},{c1}) placed_pixels={int(output_in_cell.sum())}"
+            )
+            _write_percell_debug_outputs(percell_dir / name, crop_input, sal_u8, output_in_cell)
 
     np.save(out_dir / "merged_percell_sicle_masks_int32.npy", merged)
     try:
@@ -358,6 +426,7 @@ def main() -> int:
                 f"cells: {len(labels)}",
                 f"margin: {args.margin}",
                 f"fg_erosion_pixels: {args.fg_erosion_pixels}",
+                f"saliency_threshold: {args.saliency_threshold}",
                 f"sicle preset: {args.sicle_preset} conn={conn_opt} crit={crit_opt}",
                 "",
                 *meta,
@@ -366,19 +435,8 @@ def main() -> int:
         encoding="utf-8",
     )
 
-    img_rgb_resized = None
     if args.image:
-        from cellpose import io
         from PIL import Image
-
-        img = io.imread(args.image)
-        if img.ndim == 2:
-            img = np.stack([img, img, img], axis=-1)
-        if img.shape[0] != h or img.shape[1] != w:
-            import cv2
-
-            img = cv2.resize(img, (w, h), interpolation=cv2.INTER_LINEAR)
-        img_rgb_resized = np.asarray(img[..., :3], dtype=np.uint8)
         ov = _outline_only_overlay(
             img_rgb_resized,
             merged,
@@ -422,6 +480,7 @@ def main() -> int:
     print(f"Wrote {out_dir / 'merged_percell_sicle_masks_int32.npy'}")
     print(f"Wrote {out_dir / 'merged_percell_sicle_masks_rgb.png'}")
     print(f"Wrote {out_dir / 'percell_sicle_log.txt'}")
+    print(f"Wrote per-cell outputs in {percell_dir}")
     if args.image:
         print(f"Wrote {out_dir / 'merged_percell_sicle_overlay.png'}")
     if args.run_ovlay_borders and (out_dir / "merged_percell_sicle_ovlay_borders.ppm").is_file():
