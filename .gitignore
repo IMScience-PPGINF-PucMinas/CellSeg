@@ -2,96 +2,61 @@
 __pycache__/
 *.py[cod]
 *$py.class
-*.so
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
-pip-log.txt
-pip-delete-this-directory.txt
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
-htmlcov/
-.coverage
-.coverage.*
-coverage.xml
-*.cover
-.hypothesis/
-.tox/
-.nox/
 venv/
 .venv/
 env/
-ENV/
-
-# --- Jupyter ---
-.ipynb_checkpoints/
-*.ipynb_checkpoints
 
 # --- Editors / OS ---
 .idea/
-*.swp
-*.swo
-*~
 .DS_Store
-Thumbs.db
+*:Zone.Identifier
 
-# --- Pipeline outputs (scripts in repo root; adjust names if you use others) ---
-# cp_flow_out/
-# compare_out/
-# cellpose_remix_out/
-# reproduce_cellpose_out/
-# mask_compare_out/
-# cellpose_pipeline_demo_out/
-# cellpose_idisf_out/
-# cellpose_to_idisf_out/
-
-# Generic output folders you might create
-*_pipeline_out/
-*_out_run/
-
-# Ad-hoc generated previews at repo root (uncomment if you never commit these)
-# /act_out*.png
-# /act_out*.npy
-# /cellprob_heatmap.png
-
-# --- Large / raw imaging (uncomment if you keep big data under doutorado) ---
-# *.svs
-# *.nd2
-# *.scn
-# *.mrxs
-# *.bif
-
-# --- Cellpose local model file (if you copy weights into the tree) ---
-# cellpose/cpsam
-# **/cpsam
-
-# --- Large data artifacts (avoid push failures) ---
+# --- Archives & large downloads ---
 *.zip
-*.tiff
+*.tar
+*.tar.gz
+
+# --- Imaging (keep annotations; ignore heavy rasters by default) ---
 *.svs
+*.nd2
 *.npz
 
-# Additional generated folders in this repo
-# remix_out/
-# compare_step4_vs_fused/
+# Oral Epithelium: original/normalized TIFFs (~135 MB) — obtain from dataset authors
+# Remove the next two lines if you commit full images via Git LFS.
+data/oral_epithelium/images/original/
+data/oral_epithelium/images/normalized/
 
-# --- Logs & temp ---
+# --- All pipeline runs & reviews (regenerable) ---
+outputs/
+
+# --- Legacy experiment trees (removed from working tree; do not re-add) ---
+data_sibgrapi2026/
+out_sibgrapi*/
+out_sweep*/
+out_cellvit*/
+out_gradvmaxmul/
+out_test/
+percell_sicle_out*/
+percell_three_alts*/
+path_cost*/
+sicle_path_try/
+reports/
+checkpoints/
+cp_flow_out/
+compare_out/
+remix_out/
+gt/
+viz/
+
+# --- Logs ---
 *.log
-tmp/
-temp/
-.cache/
+
+# --- Cellpose weights (optional local copy) ---
+cellpose/cpsam
+
+# --- Ad-hoc root artifacts ---
+*.tiff
+GR07-1.*
