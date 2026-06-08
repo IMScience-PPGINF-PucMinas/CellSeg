@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Single ROI test: Cellpose vs per-cell SICLE (blur05 config) on Oral Epithelium DB.
+Single ROI test: Cellpose vs per-cell SICLE (sigmoid, no Otsu, blur05) on Oral Epithelium DB.
 
 Outputs: outputs/runs/single_roi/metrics_single_roi.csv
 """
@@ -111,7 +111,7 @@ def main() -> int:
         check=True,
     )
 
-    print("=== SICLE (per-cell, blur05 config) ===")
+    print("=== SICLE (per-cell, nolin + blur05) ===")
     subprocess.run(
         [
             py,
@@ -120,6 +120,7 @@ def main() -> int:
             str(cp_dir),
             "-o",
             str(sicle_dir),
+            "--no-saliency-linearize",
             "--sicle-conn-opt",
             "gradvmaxmul",
             "--sicle-crit-opt",
@@ -145,15 +146,8 @@ def main() -> int:
             "--min-cell-area",
             "128",
             "--disable-and-merge",
-            "--and-unless-round",
-            "--min-fg-circularity",
-            "0.70",
-            "--min-fg-solidity",
-            "0.85",
-            "--fill-holes",
-            "--keep-largest-cc",
             "--closing-radius",
-            "1",
+            "0",
             "--image",
             str(input_png),
         ],
@@ -222,7 +216,8 @@ def main() -> int:
         "gt_instances": int(gt_labels.max()),
         "image_size": [int(height), int(width)],
         "out_dir": str(OUT),
-        "sicle_config": "configs/sicle_blur05.args",
+        "sicle_config": "configs/sicle_raw_nolin_blur05.args",
+        "saliency": "sigmoid only (--no-saliency-linearize)",
         "br_note": "BR = mean strict per-GT (best pred instance, margin=8px, iftEvalBR)",
         "metrics": {
             rows[i]["method"]: {k: rows[i].get(k) for k in metric_keys_out} for i in range(len(rows))

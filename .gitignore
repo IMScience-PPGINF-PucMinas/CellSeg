@@ -25,12 +25,30 @@ env/
 *.npz
 
 # Oral Epithelium: original/normalized TIFFs (~135 MB) — obtain from dataset authors
-# Remove the next two lines if you commit full images via Git LFS.
 data/oral_epithelium/images/original/
 data/oral_epithelium/images/normalized/
 
 # --- All pipeline runs & reviews (regenerable) ---
 outputs/
+
+# --- Large benchmark datasets (README only in git; prepare via tools/) ---
+data/_cache/
+data/*.zip
+data/*.zip:Zone.Identifier
+data/IHC_TMA_dataset/*
+!data/IHC_TMA_dataset/README.md
+data/monuseg/images/
+data/monuseg/masks/
+data/dsb2018/images/
+data/dsb2018/masks/
+data/consep/images/
+data/consep/masks/
+data/pannuke/images/
+data/pannuke/masks/
+
+# --- Regenerable exports & presentation assets ---
+exports/
+presentation_uva/
 
 # --- Legacy experiment trees (removed from working tree; do not re-add) ---
 data_sibgrapi2026/

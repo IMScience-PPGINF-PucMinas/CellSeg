@@ -9,6 +9,11 @@ the global SICLE step in ``reproduce_cellpose_pipeline.py``):
 Each Cellpose instance is processed in its bbox (+ margin); ``run_sicle_on_crop`` (k≈2 superpixels)
 uses mask pixels as foreground seeds (optional erosion via ``--fg-erosion-pixels``).
 
+By default, **other Cellpose instances in the bbox are excluded** from SICLE conquest via
+``--mask`` (ROI = crop background + current cell) and saliency is zeroed on their pixels
+(same intent as iDISF ``other_cells`` background scribbles). Use
+``--no-exclude-other-cells-from-conquest`` for the previous behavior.
+
 Merge behavior is configurable:
 - default (conservative): only paste where ``SICLE_fg & (mask==cell_id)``
 - optional: paste raw ``SICLE_fg`` in the bbox (no AND) via ``--disable-and-merge``
@@ -288,6 +293,33 @@ def enhance_saliency_u8(
         return np.clip(enhanced, 0.0, 255.0).astype(np.uint8)
 
     raise ValueError(f"Unknown saliency mode: {mode}")
+
+
+def conquest_roi_mask(full_mask_crop: "np.ndarray", label: int) -> "np.ndarray":
+    """Binary ROI for SICLE ``--mask``: crop background + current cell only.
+
+    Pixels belonging to *other* Cellpose instances in the bbox are excluded from
+    seeding and conquest (same intent as iDISF background scribbles on ``other_cells``).
+    """
+    import numpy as np
+
+    m = np.asarray(full_mask_crop, dtype=np.int32)
+    lab = int(label)
+    return ((m == 0) | (m == lab)).astype(np.uint8)
+
+
+def zero_saliency_outside_conquest_roi(
+    sal_u8: "np.ndarray",
+    full_mask_crop: "np.ndarray",
+    label: int,
+) -> "np.ndarray":
+    """Zero saliency on other-cell territories so they cannot drive path costs."""
+    import numpy as np
+
+    roi = conquest_roi_mask(full_mask_crop, label).astype(bool)
+    out = np.asarray(sal_u8, dtype=np.uint8).copy()
+    out[~roi] = 0
+    return out
 
 
 def bbox_for_label(
@@ -577,15 +609,70 @@ def _clean_sicle_fg_mask(
     return m, diag
 
 
+def _marker_viz_kwargs_for_cell(
+    full_crop: "np.ndarray",
+    crop_m: "np.ndarray",
+    lab: int,
+    ch: int,
+    cw: int,
+    *,
+    exclude_other: bool,
+    fg_erosion_pixels: int,
+    erosion_bg: int = 1,
+    bg_margin: int = 2,
+) -> dict:
+    """FG/BG/ignored masks and scribble coords (same recipe as per-cell iDISF)."""
+    if str(_REPO_ROOT.parent) not in sys.path:
+        sys.path.insert(0, str(_REPO_ROOT.parent))
+    from cellpose_to_idisf_pipeline import (  # noqa: WPS433
+        eroded_foreground_mask,
+        mask_to_scribble_coords,
+    )
+    from percell_conquest_viz import background_scribble_mask, unconquerable_mask
+
+    fg_mask = eroded_foreground_mask(crop_m, fg_erosion_pixels)
+    bg_mask = background_scribble_mask(
+        ch,
+        cw,
+        full_crop,
+        lab,
+        border_px=bg_margin,
+        use_unconquerable=exclude_other,
+        erosion_bg_pixels=erosion_bg,
+    )
+    ign = unconquerable_mask(full_crop, lab) if exclude_other else None
+    if exclude_other and ign is not None:
+        import numpy as np
+
+        bg_mask = (np.asarray(bg_mask, dtype=bool) & ~np.asarray(ign, dtype=bool)).astype(np.uint8)
+    fg_coords = fg_scribble_coords(crop_m.astype(bool), erosion_pixels=fg_erosion_pixels)
+    bg_coords = mask_to_scribble_coords(bg_mask)
+    return {
+        "fg_mask": fg_mask,
+        "bg_mask": bg_mask,
+        "ignored_mask": ign,
+        "fg_coords": fg_coords,
+        "bg_coords": bg_coords,
+    }
+
+
 def _write_percell_debug_outputs(
     cell_dir: Path,
     input_crop_rgb: "np.ndarray | None",
     sal_u8: "np.ndarray",
     output_in_cell: "np.ndarray",
+    *,
+    fg_mask: "np.ndarray | None" = None,
+    bg_mask: "np.ndarray | None" = None,
+    ignored_mask: "np.ndarray | None" = None,
+    fg_coords: list[tuple[int, int]] | None = None,
+    bg_coords: list[tuple[int, int]] | None = None,
 ) -> None:
-    """Write per-cell debug assets: input image, saliency map, and output-in-cell mask."""
+    """Write per-cell debug assets: input, saliency, output, and marker overlay (obj/bg/ignored)."""
     import numpy as np
     from PIL import Image
+
+    from percell_conquest_viz import write_percell_marker_figure
 
     cell_dir.mkdir(parents=True, exist_ok=True)
     if input_crop_rgb is None:
@@ -598,6 +685,16 @@ def _write_percell_debug_outputs(
     Image.fromarray(input_u8).save(cell_dir / "input_image.png")
     Image.fromarray(sal_u8, mode="L").save(cell_dir / "saliency_map.png")
     Image.fromarray(out_u8, mode="L").save(cell_dir / "output_in_cell.png")
+    if fg_mask is not None and bg_mask is not None:
+        write_percell_marker_figure(
+            cell_dir,
+            input_u8,
+            fg_mask=fg_mask,
+            bg_mask=bg_mask,
+            ignored_mask=ignored_mask,
+            fg_coords=fg_coords,
+            bg_coords=bg_coords,
+        )
 
 
 def sicle_fg_shape_circularity_solidity(fg_bool: "np.ndarray") -> tuple[float, float]:
@@ -855,11 +952,14 @@ def run_sicle_on_crop(
     scale_select: str = "last",
     scale_min_solidity: float = 0.0,
     cell_mask: "np.ndarray | None" = None,
+    conquest_mask: "np.ndarray | None" = None,
 ) -> "np.ndarray":
     """Run SICLE on a per-cell crop.
 
     ``img_crop`` is the input image (typically the **original RGB**).
     ``saliency_u8`` is an OPTIONAL grayscale saliency map (e.g. cellprob-derived).
+    ``conquest_mask`` is an optional binary mask (1 = allowed ROI) passed as ``--mask``
+    so other cells in the bbox do not participate in seeding or conquest.
     When provided it is always passed as ``--objsm`` to the binary, so canonical
     saliency-aware path costs (e.g. ``fmax`` with ``w_root^(1+alpha*|sal_diff|)``,
     Eq.2 of Belém et al., JMIV 2023) are properly enabled and ``alpha`` actually
@@ -929,6 +1029,13 @@ def run_sicle_on_crop(
         ]
         if has_saliency:
             cmd += ["--objsm", str(objsm_path)]
+        if conquest_mask is not None:
+            mask_u8 = np.asarray(conquest_mask, dtype=np.uint8)
+            if mask_u8.ndim > 2:
+                mask_u8 = mask_u8[..., 0]
+            mask_path = temp_dir / f"{crop_name}_sicle_conquest_mask.pgm"
+            Image.fromarray((mask_u8 > 0).astype(np.uint8) * 255, mode="L").save(mask_path)
+            cmd += ["--mask", str(mask_path)]
         if multiscale:
             cmd += ["--multiscale"]
         proc = subprocess.run(cmd, capture_output=True, text=True)
@@ -1004,6 +1111,14 @@ def main() -> int:
         default=0,
         metavar="N",
         help="Erode the cell mask before sampling FG scribbles for SICLE (0 = off, default; try 1 for interior-only seeds)",
+    )
+    p.add_argument(
+        "--no-exclude-other-cells-from-conquest",
+        action="store_true",
+        help=(
+            "Disable iDISF-style conquest ROI: by default, other Cellpose instances in the "
+            "bbox are excluded via SICLE --mask and saliency is zeroed on their pixels."
+        ),
     )
     p.add_argument(
         "--image",
@@ -1364,8 +1479,14 @@ def main() -> int:
         for lab in labels:
             r0, r1, c0, c1 = bbox_for_label(masks, lab, args.margin, h, w)
             crop_cp = cellprob[r0:r1, c0:c1]
-            crop_m = (masks[r0:r1, c0:c1] == lab).astype(np.uint8)
+            full_crop = masks[r0:r1, c0:c1]
+            crop_m = (full_crop == lab).astype(np.uint8)
             crop_input = None if img_rgb_resized is None else img_rgb_resized[r0:r1, c0:c1]
+            conquest_m = (
+                None
+                if args.no_exclude_other_cells_from_conquest
+                else conquest_roi_mask(full_crop, lab)
+            )
             crop_dP = None
             if dP is not None:
                 if dP.ndim == 3 and dP.shape[0] == 2:
@@ -1380,6 +1501,8 @@ def main() -> int:
             sal_u8 = apply_saliency_threshold_u8(sal_u8, args.saliency_threshold)
             if args.saliency_blur_sigma > 0.0:
                 sal_u8 = apply_saliency_blur_u8(sal_u8, args.saliency_blur_sigma)
+            if conquest_m is not None:
+                sal_u8 = zero_saliency_outside_conquest_roi(sal_u8, full_crop, lab)
             if args.saliency_mode != "cellprob":
                 sal_u8 = enhance_saliency_u8(
                     sal_u8,
@@ -1393,17 +1516,31 @@ def main() -> int:
             area = int(crop_m.sum())
             name = f"cell_{lab:05d}"
             output_in_cell = crop_m.astype(bool)
+            exclude_other = conquest_m is not None
+            marker_kw = _marker_viz_kwargs_for_cell(
+                full_crop,
+                crop_m,
+                lab,
+                crop_m.shape[0],
+                crop_m.shape[1],
+                exclude_other=exclude_other,
+                fg_erosion_pixels=args.fg_erosion_pixels,
+            )
             if area < args.min_cell_area:
                 merged[r0:r1, c0:c1][output_in_cell] = lab
                 meta.append(f"label {lab}: area={area} < min_cell_area, kept Cellpose mask")
-                _write_percell_debug_outputs(percell_dir / name, crop_input, sal_u8, output_in_cell)
+                _write_percell_debug_outputs(
+                    percell_dir / name, crop_input, sal_u8, output_in_cell, **marker_kw
+                )
                 continue
 
-            fg = fg_scribble_coords(crop_m.astype(bool), erosion_pixels=args.fg_erosion_pixels)
+            fg = marker_kw["fg_coords"]
             if not fg:
                 merged[r0:r1, c0:c1][output_in_cell] = lab
                 meta.append(f"label {lab}: no fg seeds, kept Cellpose mask")
-                _write_percell_debug_outputs(percell_dir / name, crop_input, sal_u8, output_in_cell)
+                _write_percell_debug_outputs(
+                    percell_dir / name, crop_input, sal_u8, output_in_cell, **marker_kw
+                )
                 continue
 
             if args.sicle_use_rgb_image and crop_input is not None:
@@ -1442,11 +1579,14 @@ def main() -> int:
                     scale_select=args.sicle_scale_select,
                     scale_min_solidity=args.sicle_scale_min_solidity,
                     cell_mask=crop_m.astype(bool),
+                    conquest_mask=conquest_m,
                 )
             except Exception as e:
                 merged[r0:r1, c0:c1][output_in_cell] = lab
                 meta.append(f"label {lab}: SICLE failed ({e}), kept Cellpose mask")
-                _write_percell_debug_outputs(percell_dir / name, crop_input, sal_u8, output_in_cell)
+                _write_percell_debug_outputs(
+                    percell_dir / name, crop_input, sal_u8, output_in_cell, **marker_kw
+                )
                 continue
 
             obj = sicle_lbl == 1
@@ -1464,7 +1604,9 @@ def main() -> int:
                         f"label {lab}: solidity={_sol_v:.3f} < {args.sicle_min_solidity:.2f}, "
                         f"reverted to Cellpose mask (Veta filter)"
                     )
-                    _write_percell_debug_outputs(percell_dir / name, crop_input, sal_u8, crop_m.astype(bool))
+                    _write_percell_debug_outputs(
+                        percell_dir / name, crop_input, sal_u8, crop_m.astype(bool), **marker_kw
+                    )
                     continue
             if args.disable_and_merge:
                 if args.and_unless_round:
@@ -1491,7 +1633,9 @@ def main() -> int:
             meta.append(
                 f"label {lab}: bbox=({r0},{r1},{c0},{c1}) placed_pixels={int(output_in_cell.sum())} merge={merge_note}{cleanup_tag}"
             )
-            _write_percell_debug_outputs(percell_dir / name, crop_input, sal_u8, output_in_cell)
+            _write_percell_debug_outputs(
+                percell_dir / name, crop_input, sal_u8, output_in_cell, **marker_kw
+            )
 
     np.save(out_dir / "merged_percell_sicle_masks_int32.npy", merged)
     try:

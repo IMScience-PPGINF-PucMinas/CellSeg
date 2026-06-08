@@ -1,5 +1,4 @@
-# LEGACY: Otsu saliency compression. Prefer configs/sicle_nolin_blur05.args
-# Best per-cell SICLE config (SIBGRAPI sweep → blur sigma 0.5)
+# Default method (2026): sigmoid cellprob, no Otsu linearization
 SICLE_CONN=gradvmaxmul
 SICLE_CRIT=minsc
 SICLE_ALPHA=2.0
@@ -8,6 +7,7 @@ SICLE_N0=200
 SICLE_IRREG=0
 SICLE_ADHR=1
 SICLE_MAX_ITERS=7
+SALIENCY_LINEARIZE=0
 SALIENCY_THRESHOLD=0.3
 SALIENCY_BLUR_SIGMA=0.5
 MARGIN=4
