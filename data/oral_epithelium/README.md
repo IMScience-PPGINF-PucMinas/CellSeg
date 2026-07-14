@@ -1,6 +1,6 @@
 # Oral Epithelium DB (in-repo layout)
 
-Dataset: **Oral Epithelium DB** — 200 ROIs (100 healthy, 100 severe).
+Dataset: **Oral Epithelium DB** — 228 H&E patches (114 healthy, 114 severe). **100 patches** (50 per class) have per-cell instance gold standard; the other **128** have semantic labels only (no instance GT).
 
 ## Layout
 

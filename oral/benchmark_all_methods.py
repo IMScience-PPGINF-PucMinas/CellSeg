@@ -40,6 +40,9 @@ from method_infer import (
     run_idisf_percell,
     run_pathosam,
     run_sicle_percell,
+    run_stardist,
+    run_watershed,
+    stardist_model_name_for_dataset,
 )
 
 OUT_ROOT = RUNS / "all_methods_comparison"
@@ -48,7 +51,16 @@ CP_ROOT = RUNS / "postprocess_ablation_full"
 SICLE_ROOT = RUNS / "nf_sweep_full"
 IDISF_ROOT = RUNS / "percell_idisf_full"
 
-METHODS = ("cellpose", "sicle_percell", "idisf_percell", "cellvit", "pathosam")
+METHODS = (
+    "cellpose",
+    "sicle_percell",
+    "idisf_percell",
+    "cellvit",
+    "pathosam",
+    "stardist",
+    "watershed",
+)
+DEFAULT_METHODS = METHODS[:5]
 
 # Reuse existing oral masks when available
 ORAL_REUSE = {
@@ -106,21 +118,48 @@ def _pipeline_env() -> dict[str, str]:
     return env
 
 
-def _score(gt_path: Path, pr_path: Path) -> tuple[float, float, float, float]:
+def _score(gt_path: Path, pr_path: Path, *, dataset: str) -> dict[str, float]:
     sys.path.insert(0, str(PIPE))
-    from boundary_fb_metric import mean_f_area_strict, mean_fb_strict
+    from boundary_fb_metric import (
+        boundary_metrics_seraph,
+        mean_f_area_strict,
+        mean_fb_strict,
+    )
     from evaluate_instances import evaluate_pair
 
     gt = np.load(gt_path).astype(np.int32)
     pr = np.load(pr_path).astype(np.int32)
     ev = evaluate_pair(gt_path, pr_path)
     dice_roi = float(ev.get("pixel_dice", float("nan")))
-    return (
-        mean_br_strict(gt, pr),
-        mean_fb_strict(gt, pr),
-        mean_f_area_strict(gt, pr),
-        dice_roi,
-    )
+    out: dict[str, float] = {
+        "br_mean_strict": mean_br_strict(gt, pr),
+        "fb_mean_strict": mean_fb_strict(gt, pr),
+        "f_area_mean_strict": mean_f_area_strict(gt, pr),
+        "pixel_dice": dice_roi,
+    }
+    if dataset != "pannuke":
+        br_s, bp_s, bf_s = boundary_metrics_seraph(gt, pr)
+        out["br_seraph"] = br_s
+        out["boundary_precision_seraph"] = bp_s
+        out["boundary_f_seraph"] = bf_s
+    return out
+
+
+def _finite_metric(val) -> bool:
+    if val in (None, ""):
+        return False
+    try:
+        return bool(np.isfinite(float(val)))
+    except (TypeError, ValueError):
+        return False
+
+
+def _row_complete(r: dict) -> bool:
+    if not _finite_metric(r.get("f_area_mean_strict")):
+        return False
+    if r.get("dataset") != "pannuke" and not _finite_metric(r.get("br_seraph")):
+        return False
+    return True
 
 
 def _append_row(
@@ -130,21 +169,23 @@ def _append_row(
     sample_id: str,
     category: str,
     method: str,
-    br: float,
-    fb: float,
-    f_area: float,
-    dice_roi: float,
+    scores: dict[str, float],
 ) -> None:
-    rows.append({
+    row = {
         "dataset": dataset,
         "sample_id": sample_id,
         "category": category,
         "method": method,
-        "br_mean_strict": br,
-        "fb_mean_strict": fb,
-        "f_area_mean_strict": f_area,
-        "pixel_dice": dice_roi,
-    })
+        "br_mean_strict": scores["br_mean_strict"],
+        "fb_mean_strict": scores["fb_mean_strict"],
+        "f_area_mean_strict": scores["f_area_mean_strict"],
+        "pixel_dice": scores["pixel_dice"],
+    }
+    if dataset != "pannuke":
+        row["br_seraph"] = scores.get("br_seraph", float("nan"))
+        row["boundary_precision_seraph"] = scores.get("boundary_precision_seraph", float("nan"))
+        row["boundary_f_seraph"] = scores.get("boundary_f_seraph", float("nan"))
+    rows.append(row)
 
 
 CSV_FIELDS = [
@@ -153,6 +194,9 @@ CSV_FIELDS = [
     "category",
     "method",
     "br_mean_strict",
+    "br_seraph",
+    "boundary_precision_seraph",
+    "boundary_f_seraph",
     "fb_mean_strict",
     "f_area_mean_strict",
     "pixel_dice",
@@ -168,37 +212,71 @@ def _write_csv(path: Path, rows: list[dict]) -> None:
         w.writerows(rows)
 
 
+def _fmt_mean(vals: list[float]) -> str:
+    finite = [float(v) for v in vals if _finite_metric(v)]
+    return f"{float(np.mean(finite)):.4f}" if finite else "—"
+
+
 def _macro_table(rows: list[dict], dataset: str) -> list[str]:
-    by_m: dict[str, list[float]] = defaultdict(list)
+    by_br: dict[str, list[float]] = defaultdict(list)
+    by_br_s: dict[str, list[float]] = defaultdict(list)
     by_m_fb: dict[str, list[float]] = defaultdict(list)
     by_m_fa: dict[str, list[float]] = defaultdict(list)
     by_m_dice: dict[str, list[float]] = defaultdict(list)
     for r in rows:
         if r["dataset"] != dataset:
             continue
-        by_m[r["method"]].append(float(r["br_mean_strict"]))
+        by_br[r["method"]].append(float(r["br_mean_strict"]))
+        if _finite_metric(r.get("br_seraph")):
+            by_br_s[r["method"]].append(float(r["br_seraph"]))
         by_m_fb[r["method"]].append(float(r["fb_mean_strict"]))
         if r.get("f_area_mean_strict") not in (None, ""):
             by_m_fa[r["method"]].append(float(r["f_area_mean_strict"]))
         if r.get("pixel_dice") not in (None, ""):
             by_m_dice[r["method"]].append(float(r["pixel_dice"]))
 
-    lines = [
-        f"### {dataset}",
-        "",
-        "| Método | BR (borda) | Fb (borda) | Fa (área/célula) | Dice (área/ROI) | n |",
-        "|--------|--------:|--------:|-----------------:|----------------:|--:|",
-    ]
-    for m in METHODS:
-        if by_m.get(m):
-            fa_m = float(np.mean(by_m_fa[m])) if by_m_fa[m] else float("nan")
-            dice_m = float(np.mean(by_m_dice[m])) if by_m_dice[m] else float("nan")
-            lines.append(
-                f"| `{m}` | {np.mean(by_m[m]):.4f} | {np.mean(by_m_fb[m]):.4f} | "
-                f"{fa_m:.4f} | {dice_m:.4f} | {len(by_m[m])} |"
-            )
+    lines = [f"### {dataset}", ""]
+    if dataset == "pannuke":
+        lines.extend([
+            "| Método | BR strict | Fb | Fa | Dice | n |",
+            "|--------|--------:|---:|---:|-----:|--:|",
+        ])
+        for m in METHODS:
+            if by_br.get(m):
+                lines.append(
+                    f"| `{m}` | {_fmt_mean(by_br[m])} | {_fmt_mean(by_m_fb[m])} | "
+                    f"{_fmt_mean(by_m_fa[m])} | {_fmt_mean(by_m_dice[m])} | {len(by_br[m])} |"
+                )
+    else:
+        lines.extend([
+            "| Método | BR macro | BR pooled | Fb | Fa | Dice | n |",
+            "|--------|--------:|----------:|---:|---:|-----:|--:|",
+        ])
+        for m in METHODS:
+            if by_br.get(m):
+                lines.append(
+                    f"| `{m}` | {_fmt_mean(by_br[m])} | {_fmt_mean(by_br_s[m])} | "
+                    f"{_fmt_mean(by_m_fb[m])} | {_fmt_mean(by_m_fa[m])} | "
+                    f"{_fmt_mean(by_m_dice[m])} | {len(by_br[m])} |"
+                )
     lines.append("")
     return lines
+
+
+def _print_scores(method: str, scores: dict[str, float], *, dataset: str) -> None:
+    if dataset == "pannuke":
+        print(
+            f"    {method:16s} BR={scores['br_mean_strict']:.4f} "
+            f"Fb={scores['fb_mean_strict']:.4f} Fa={scores['f_area_mean_strict']:.4f} "
+            f"Dice={scores['pixel_dice']:.4f}"
+        )
+    else:
+        print(
+            f"    {method:16s} BRs={scores['br_mean_strict']:.4f} "
+            f"BR_S={scores.get('br_seraph', float('nan')):.4f} "
+            f"Fb={scores['fb_mean_strict']:.4f} Fa={scores['f_area_mean_strict']:.4f} "
+            f"Dice={scores['pixel_dice']:.4f}"
+        )
 
 
 def benchmark_oral(
@@ -260,16 +338,29 @@ def benchmark_oral(
                 pr = case / "pathosam_flow" / "step04_masks_uint16.npy"
                 if not _mask_ready(pr) and run_infer:
                     run_pathosam(image_path, case / "pathosam_flow", device="cuda" if gpu else "cpu")
+            elif method == "stardist":
+                pr = case / "stardist_flow" / "step04_masks_uint16.npy"
+                if not _mask_ready(pr) and run_infer:
+                    run_stardist(
+                        image_path,
+                        case / "stardist_flow",
+                        model_name=stardist_model_name_for_dataset("oral_epithelium"),
+                        gpu=False,
+                    )
+            elif method == "watershed":
+                pr = case / "watershed_flow" / "step04_masks_uint16.npy"
+                if not _mask_ready(pr) and run_infer:
+                    run_watershed(image_path, case / "watershed_flow")
             else:
                 continue
 
             if not _mask_ready(pr):
                 print(f"    skip {method}: no mask")
                 continue
-            br, fb, f_area, dice_roi = _score(gt_path, pr)
+            scores = _score(gt_path, pr, dataset="oral_epithelium")
             _append_row(rows, dataset="oral_epithelium", sample_id=stem, category=category,
-                        method=method, br=br, fb=fb, f_area=f_area, dice_roi=dice_roi)
-            print(f"    {method:16s} BR={br:.4f} Fb={fb:.4f} Fa={f_area:.4f} Dice={dice_roi:.4f}")
+                        method=method, scores=scores)
+            _print_scores(method, scores, dataset="oral_epithelium")
 
 
 def _write_progress(
@@ -341,6 +432,10 @@ def _method_mask_path(case: Path, method: str) -> Path:
         return case / "cellvit_flow" / "step04_masks_uint16.npy"
     if method == "pathosam":
         return case / "pathosam_flow" / "step04_masks_uint16.npy"
+    if method == "stardist":
+        return case / "stardist_flow" / "step04_masks_uint16.npy"
+    if method == "watershed":
+        return case / "watershed_flow" / "step04_masks_uint16.npy"
     raise ValueError(method)
 
 
@@ -379,11 +474,11 @@ def _score_methods_for_case(
         if not _mask_ready(pr):
             print(f"    skip {method}: no mask")
             continue
-        br, fb, f_area, dice_roi = _score(gt_path, pr)
+        scores = _score(gt_path, pr, dataset=dataset)
         _append_row(rows, dataset=dataset, sample_id=stem, category=category,
-                    method=method, br=br, fb=fb, f_area=f_area, dice_roi=dice_roi)
+                    method=method, scores=scores)
         done.add((dataset, stem, method))
-        print(f"    {method:16s} BR={br:.4f} Fb={fb:.4f} Fa={f_area:.4f} Dice={dice_roi:.4f}")
+        _print_scores(method, scores, dataset=dataset)
 
 
 def benchmark_patch_dataset(
@@ -470,6 +565,15 @@ def benchmark_patch_dataset(
                 run_cellvit(img_path, case / "cellvit_flow", gpu=None if not gpu else 0)
             if run_infer and "pathosam" in methods and not _mask_ready(_method_mask_path(case, "pathosam")):
                 run_pathosam(img_path, case / "pathosam_flow", device="cuda" if gpu else "cpu")
+            if run_infer and "stardist" in methods and not _mask_ready(_method_mask_path(case, "stardist")):
+                run_stardist(
+                    img_path,
+                    case / "stardist_flow",
+                    model_name=stardist_model_name_for_dataset(dataset),
+                    gpu=False,
+                )
+            if run_infer and "watershed" in methods and not _mask_ready(_method_mask_path(case, "watershed")):
+                run_watershed(img_path, case / "watershed_flow")
 
             if parallel_cpu and cpu_future is not None:
                 pending_cpu.append((stem, gt_path, case, cpu_future))
@@ -517,7 +621,10 @@ def write_summary(all_rows: list[dict]) -> None:
         "Métodos: `cellpose`, `sicle_percell`, `idisf_percell`, `cellvit`, `pathosam`.",
         "",
         "**Por borda (contorno):**",
-        "- **BR** — revocação de pixels de borda GT (per-cell strict).",
+        "- **BR macro** (`br_mean_strict`) — per-GT-instance recall at $\\tau{=}2$\\,px, "
+        "thick boundaries, strict instance matching; **arithmetic mean over cells**.",
+        "- **BR pooled** (`br_seraph`, BR Area) — same $\\tau{=}2$\\,px and boundary map, "
+        "but all GT boundary pixels counted jointly on the tile (**not** averaged per cell).",
         "- **Fb** — F-measure Arbeláez no **contorno** 1 px (tolerância 0.0075×diagonal), per-cell strict.",
         "",
         "**Por região (área da célula):**",
@@ -546,28 +653,30 @@ def write_summary(all_rows: list[dict]) -> None:
 
     # Cross-dataset average (methods present in both)
     lines.extend(["## Média macro combinada (todos os samples avaliados)", ""])
-    by_m: dict[str, list[float]] = defaultdict(list)
+    by_br: dict[str, list[float]] = defaultdict(list)
+    by_br_s: dict[str, list[float]] = defaultdict(list)
     by_fb: dict[str, list[float]] = defaultdict(list)
     by_fa: dict[str, list[float]] = defaultdict(list)
     by_dice: dict[str, list[float]] = defaultdict(list)
     for r in all_rows:
-        by_m[r["method"]].append(float(r["br_mean_strict"]))
+        by_br[r["method"]].append(float(r["br_mean_strict"]))
+        if _finite_metric(r.get("br_seraph")):
+            by_br_s[r["method"]].append(float(r["br_seraph"]))
         by_fb[r["method"]].append(float(r["fb_mean_strict"]))
         if r.get("f_area_mean_strict") not in (None, ""):
             by_fa[r["method"]].append(float(r["f_area_mean_strict"]))
         if r.get("pixel_dice") not in (None, ""):
             by_dice[r["method"]].append(float(r["pixel_dice"]))
     lines.extend([
-        "| Método | BR (borda) | Fb (borda) | Fa (área/célula) | Dice (área/ROI) | n total |",
-        "|--------|--------:|--------:|-----------------:|----------------:|--------:|",
+        "| Método | BR macro | BR pooled | Fb | Fa | Dice | n total |",
+        "|--------|--------:|----------:|---:|---:|-----:|--------:|",
     ])
     for m in METHODS:
-        if by_m.get(m):
-            fa_m = float(np.mean(by_fa[m])) if by_fa[m] else float("nan")
-            dice_m = float(np.mean(by_dice[m])) if by_dice[m] else float("nan")
+        if by_br.get(m):
             lines.append(
-                f"| `{m}` | {np.mean(by_m[m]):.4f} | {np.mean(by_fb[m]):.4f} | "
-                f"{fa_m:.4f} | {dice_m:.4f} | {len(by_m[m])} |"
+                f"| `{m}` | {_fmt_mean(by_br[m])} | {_fmt_mean(by_br_s[m])} | "
+                f"{_fmt_mean(by_fb[m])} | {_fmt_mean(by_fa[m])} | "
+                f"{_fmt_mean(by_dice[m])} | {len(by_br[m])} |"
             )
     lines.append("")
     (OUT_ROOT / "summary.md").write_text("\n".join(lines), encoding="utf-8")
@@ -583,7 +692,7 @@ def main() -> int:
         default="both",
         help="new4=monuseg+consep+dsb2018+pannuke; all=oral+all patch datasets",
     )
-    p.add_argument("--methods", nargs="+", default=list(METHODS))
+    p.add_argument("--methods", nargs="+", default=list(DEFAULT_METHODS))
     p.add_argument("--max-samples", type=int, default=0, help="0 = all")
     p.add_argument("--metrics-only", action="store_true",
                    help="Only score existing masks (oral: reuse prior runs)")
@@ -599,7 +708,7 @@ def main() -> int:
     p.add_argument(
         "--no-skip-complete",
         action="store_true",
-        help="Revisit patches even when all method masks exist",
+        help="Rescore/revisit all patches even when metrics rows already exist",
     )
     args = p.parse_args()
 
@@ -613,7 +722,7 @@ def main() -> int:
         with csv_path.open(encoding="utf-8") as fp:
             for r in csv.DictReader(fp):
                 rows.append(r)
-                if r.get("f_area_mean_strict") not in (None, ""):
+                if not args.no_skip_complete and _row_complete(r):
                     done.add((r["dataset"], r["sample_id"], r["method"]))
 
     run_infer = not args.metrics_only

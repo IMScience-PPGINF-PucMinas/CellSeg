@@ -12,7 +12,8 @@ Unified comparison of **BR**, **Fb**, **Fa** and **Dice** across five methods:
 
 ## Metrics
 
-- **BR** — per-cell strict boundary recall (GT contour pixels recovered).
+- **BR macro** (`br_mean_strict`) — per-GT-instance recall, $\tau{=}2$ px, thick boundaries, strict matching; **mean over cells**.
+- **BR pooled** (`br_seraph`, BR Area) — same $\tau{=}2$ px, all GT boundary pixels pooled on the tile; omitted for `pannuke`.
 - **Fb** — Arbeláez F-measure on 1 px contours (tolerance 0.0075×diagonal).
 - **Fa** — per-cell pixel F1 (area), macro mean.
 - **Dice** — ROI-level pixel F1 on merged foreground.

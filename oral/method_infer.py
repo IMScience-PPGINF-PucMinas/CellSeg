@@ -271,6 +271,9 @@ def merge_cellpose_pathosam_seeds(
     pathosam_masks: np.ndarray,
     *,
     iou_thresh: float = 0.5,
+    saliency_prob: np.ndarray | None = None,
+    saliency_min: float = 0.0,
+    min_area: int = 0,
 ) -> np.ndarray:
     """
     Union of Cellpose + PathoSAM instance maps as iDISF seeds.
@@ -285,9 +288,16 @@ def merge_cellpose_pathosam_seeds(
     merged = cp.copy()
     next_id = int(merged.max()) + 1
     cp_ids = [int(x) for x in np.unique(cp) if int(x) > 0]
+    sal = None if saliency_prob is None else np.asarray(saliency_prob, dtype=np.float32)
+    if sal is not None and sal.shape != cp.shape:
+        h = min(cp.shape[0], sal.shape[0])
+        w = min(cp.shape[1], sal.shape[1])
+        cp, ps, merged, sal = cp[:h, :w], ps[:h, :w], merged[:h, :w], sal[:h, :w]
     for pid in sorted(int(x) for x in np.unique(ps) if int(x) > 0):
         ps_m = ps == pid
-        if not ps_m.any():
+        if not ps_m.any() or int(ps_m.sum()) < min_area:
+            continue
+        if sal is not None and float(sal[ps_m].mean()) < saliency_min:
             continue
         max_iou = 0.0
         for cid in cp_ids:
@@ -303,20 +313,67 @@ def merge_cellpose_pathosam_seeds(
     return merged
 
 
-def prepare_merged_seed_dir(
-    cp_flow_dir: Path,
-    pathosam_masks_path: Path,
-    seed_dir: Path,
+def pathosam_novel_seeds_only(
+    cellpose_masks: np.ndarray,
+    pathosam_masks: np.ndarray,
     *,
     iou_thresh: float = 0.5,
-) -> Path:
-    """Write ``step04_masks_uint16.npy`` (CP+PS union) + link ``step03_dP_cellprob.npz``."""
+    saliency_prob: np.ndarray | None = None,
+    saliency_min: float = 0.0,
+    min_area: int = 128,
+) -> np.ndarray:
+    """PathoSAM instances not overlapping Cellpose (IoU < thresh), relabeled 1..N."""
+    union = merge_cellpose_pathosam_seeds(
+        cellpose_masks,
+        pathosam_masks,
+        iou_thresh=iou_thresh,
+        saliency_prob=saliency_prob,
+        saliency_min=saliency_min,
+        min_area=min_area,
+    )
+    cp = np.asarray(cellpose_masks, dtype=np.int32)
+    if union.shape != cp.shape:
+        h = min(union.shape[0], cp.shape[0])
+        w = min(union.shape[1], cp.shape[1])
+        union, cp = union[:h, :w], cp[:h, :w]
+    novel = np.zeros_like(union, dtype=np.int32)
+    next_id = 1
+    for lab in sorted(int(x) for x in np.unique(union) if int(x) > 0):
+        m = union == lab
+        if not (m & (cp > 0)).any():
+            novel[m] = next_id
+            next_id += 1
+    return novel
+
+
+def merge_idisf_split_outputs(
+    cp_out: np.ndarray,
+    ps_out: np.ndarray,
+) -> np.ndarray:
+    """
+    Keep Cellpose+iDISF cells unchanged; add PathoSAM-only iDISF where CP left background.
+    """
+    merged = np.asarray(cp_out, dtype=np.int32).copy()
+    ps_out = np.asarray(ps_out, dtype=np.int32)
+    if ps_out.shape != merged.shape:
+        h = min(merged.shape[0], ps_out.shape[0])
+        w = min(merged.shape[1], ps_out.shape[1])
+        merged, ps_out = merged[:h, :w], ps_out[:h, :w]
+    next_id = int(merged.max()) + 1
+    for pid in sorted(int(x) for x in np.unique(ps_out) if int(x) > 0):
+        place = (ps_out == pid) & (merged == 0)
+        if not place.any():
+            continue
+        merged[place] = next_id
+        next_id += 1
+    return merged
+
+
+def _write_seed_masks(seed_dir: Path, masks: np.ndarray, cp_flow_dir: Path) -> Path:
+    """Write step04 + symlink cellprob npz from cp_flow."""
     npz = cp_flow_dir / "step03_dP_cellprob.npz"
-    cp_masks = cp_flow_dir / "step04_masks_uint16.npy"
     if not npz.is_file():
         raise FileNotFoundError(npz)
-    if not cp_masks.is_file():
-        raise FileNotFoundError(cp_masks)
     seed_dir.mkdir(parents=True, exist_ok=True)
     dst_npz = seed_dir / "step03_dP_cellprob.npz"
     if not dst_npz.exists():
@@ -325,11 +382,70 @@ def prepare_merged_seed_dir(
         except OSError:
             import shutil
             shutil.copy2(npz, dst_npz)
+    np.save(seed_dir / "step04_masks_uint16.npy", np.asarray(masks, dtype=np.uint16))
+    return seed_dir
+
+
+def prepare_merged_seed_dir(
+    cp_flow_dir: Path,
+    pathosam_masks_path: Path,
+    seed_dir: Path,
+    *,
+    iou_thresh: float = 0.5,
+    saliency_path: Path | None = None,
+    saliency_min: float = 0.0,
+    min_area: int = 0,
+) -> Path:
+    """Write ``step04_masks_uint16.npy`` (CP+PS union) + link ``step03_dP_cellprob.npz``."""
+    cp_masks = cp_flow_dir / "step04_masks_uint16.npy"
+    if not cp_masks.is_file():
+        raise FileNotFoundError(cp_masks)
     cp = np.load(cp_masks)
     ps = np.load(pathosam_masks_path)
-    merged = merge_cellpose_pathosam_seeds(cp, ps, iou_thresh=iou_thresh)
-    np.save(seed_dir / "step04_masks_uint16.npy", merged.astype(np.uint16))
-    return seed_dir
+    sal = np.load(saliency_path).astype(np.float32) if saliency_path and saliency_path.is_file() else None
+    merged = merge_cellpose_pathosam_seeds(
+        cp, ps, iou_thresh=iou_thresh, saliency_prob=sal, saliency_min=saliency_min, min_area=min_area,
+    )
+    return _write_seed_masks(seed_dir, merged, cp_flow_dir)
+
+
+def _idisf_percell_args() -> list[str]:
+    return [
+        "--margin", "4",
+        "--min-cell-area", "128",
+        "--erosion-fg", "1",
+        "--erosion-bg", "1",
+        "--bg-margin", "2",
+        "--disable-and-merge",
+    ]
+
+
+def _run_idisf_percell(
+    image_path: Path,
+    seed_dir: Path,
+    out_dir: Path,
+    *,
+    pipe_dir: Path,
+    repo_dir: Path,
+    env: dict[str, str] | None,
+) -> Path:
+    subprocess.run(
+        [
+            sys.executable,
+            str(pipe_dir / "percell_idisf_cellpose_pipeline.py"),
+            "--from-dir", str(seed_dir),
+            "-o", str(out_dir),
+            "--image", str(image_path),
+            *_idisf_percell_args(),
+        ],
+        cwd=str(repo_dir),
+        env=env,
+        check=True,
+    )
+    pr = out_dir / "merged_percell_idisf_masks_int32.npy"
+    if not pr.is_file() or pr.stat().st_size == 0:
+        raise RuntimeError(f"missing iDISF output: {pr}")
+    return pr
 
 
 def run_idisf_merged_cp_pathosam_seeds(
@@ -342,35 +458,61 @@ def run_idisf_merged_cp_pathosam_seeds(
     repo_dir: Path,
     env: dict[str, str] | None = None,
     iou_thresh: float = 0.5,
+    strategy: str = "union",
+    saliency_min: float = 0.0,
+    min_area: int = 128,
 ) -> Path:
-    """Per-cell iDISF with Cellpose+PathoSAM union as seeds."""
+    """
+    Per-cell iDISF with Cellpose + PathoSAM seeds.
+
+    Strategies:
+      - ``union``: single iDISF on merged seed map (legacy; PS seeds can affect CP neighbors).
+      - ``split``: iDISF on CP seeds, then iDISF on PS-novel only; merge without touching CP cells.
+    """
     out_dir.mkdir(parents=True, exist_ok=True)
     pr = out_dir / "merged_percell_idisf_masks_int32.npy"
     if pr.is_file() and pr.stat().st_size > 0:
         return pr
-    seed_dir = out_dir / "merged_seed_cp_ps"
-    prepare_merged_seed_dir(cp_flow_dir, pathosam_masks_path, seed_dir, iou_thresh=iou_thresh)
-    idisf_args = [
-        "--margin", "4",
-        "--min-cell-area", "128",
-        "--erosion-fg", "1",
-        "--erosion-bg", "1",
-        "--bg-margin", "2",
-        "--disable-and-merge",
-    ]
-    subprocess.run(
-        [
-            sys.executable,
-            str(pipe_dir / "percell_idisf_cellpose_pipeline.py"),
-            "--from-dir", str(seed_dir),
-            "-o", str(out_dir),
-            "--image", str(image_path),
-            *idisf_args,
-        ],
-        cwd=str(repo_dir),
-        env=env,
-        check=True,
+
+    ps_dir = pathosam_masks_path.parent
+    sal_path = pathosam_saliency_path(ps_dir)
+    sal = np.load(sal_path).astype(np.float32) if sal_path.is_file() else None
+
+    if strategy == "union":
+        seed_dir = out_dir / "merged_seed_cp_ps"
+        prepare_merged_seed_dir(
+            cp_flow_dir, pathosam_masks_path, seed_dir,
+            iou_thresh=iou_thresh, saliency_path=sal_path if sal_path.is_file() else None,
+            saliency_min=saliency_min, min_area=min_area,
+        )
+        _run_idisf_percell(image_path, seed_dir, out_dir, pipe_dir=pipe_dir, repo_dir=repo_dir, env=env)
+        return pr
+
+    if strategy != "split":
+        raise ValueError(f"unknown strategy: {strategy}")
+
+    cp = np.load(cp_flow_dir / "step04_masks_uint16.npy")
+    ps = np.load(pathosam_masks_path)
+    novel = pathosam_novel_seeds_only(
+        cp, ps, iou_thresh=iou_thresh, saliency_prob=sal, saliency_min=saliency_min, min_area=min_area,
     )
+    cp_only_dir = out_dir / "_split_cp_seeds"
+    cp_work = out_dir / "_split_cp_work"
+    _write_seed_masks(cp_only_dir, cp, cp_flow_dir)
+    _run_idisf_percell(image_path, cp_only_dir, cp_work, pipe_dir=pipe_dir, repo_dir=repo_dir, env=env)
+    cp_out = np.load(cp_work / "merged_percell_idisf_masks_int32.npy").astype(np.int32)
+
+    if not (novel > 0).any():
+        np.save(pr, cp_out)
+        return pr
+
+    ps_only_dir = out_dir / "_split_ps_seeds"
+    ps_work = out_dir / "_split_ps_work"
+    _write_seed_masks(ps_only_dir, novel, cp_flow_dir)
+    _run_idisf_percell(image_path, ps_only_dir, ps_work, pipe_dir=pipe_dir, repo_dir=repo_dir, env=env)
+    ps_out = np.load(ps_work / "merged_percell_idisf_masks_int32.npy").astype(np.int32)
+    merged = merge_idisf_split_outputs(cp_out, ps_out)
+    np.save(pr, merged)
     return pr
 
 
@@ -457,6 +599,136 @@ def run_idisf_percell(
         check=True,
     )
     return pr
+
+
+_STARDIST_CACHE: dict[str, object] = {}
+
+
+def stardist_model_name_for_dataset(dataset: str) -> str:
+    """Pick a pretrained StarDist2D model by modality."""
+    if dataset in ("dsb2018", "ihc_tma"):
+        return "2D_versatile_fluo"
+    return "2D_versatile_he"
+
+
+def _stardist_model(model_name: str):
+    if model_name not in _STARDIST_CACHE:
+        from stardist.models import StarDist2D
+
+        _STARDIST_CACHE[model_name] = StarDist2D.from_pretrained(model_name)
+    return _STARDIST_CACHE[model_name]
+
+
+def _stardist_input_array(image_path: Path, model_name: str) -> np.ndarray:
+    """Build YXC array matching the pretrained model's ``n_channel_in``."""
+    from skimage import color
+
+    rgb = np.asarray(Image.open(image_path).convert("RGB"), dtype=np.float32)
+    if model_name == "2D_versatile_fluo":
+        gray = color.rgb2gray(rgb)
+        return gray[..., np.newaxis]
+    return rgb
+
+
+def run_stardist(
+    image_path: Path,
+    out_dir: Path,
+    *,
+    model_name: str = "2D_versatile_he",
+    gpu: bool = False,
+) -> Path:
+    """Run pretrained StarDist2D; returns step04 masks path."""
+    import os
+
+    from csbdeep.utils import normalize
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out = out_dir / "step04_masks_uint16.npy"
+    if out.is_file() and out.stat().st_size > 0:
+        arr = np.load(out)
+        if arr.ndim == 2 and int(arr.max()) > 0:
+            return out
+
+    # StarDist uses TensorFlow; force CPU when gpu=False or when CuDNN is unavailable.
+    prev_cuda = os.environ.get("CUDA_VISIBLE_DEVICES")
+    if not gpu:
+        os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+    try:
+        model = _stardist_model(model_name)
+        img = _stardist_input_array(image_path, model_name)
+        img_norm = normalize(img, 1, 99.8, axis=(0, 1))
+        labels, _ = model.predict_instances(img_norm)
+    except Exception:
+        if gpu:
+            os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+            model = _stardist_model(model_name)
+            img = _stardist_input_array(image_path, model_name)
+            img_norm = normalize(img, 1, 99.8, axis=(0, 1))
+            labels, _ = model.predict_instances(img_norm)
+        else:
+            raise
+    finally:
+        if not gpu:
+            if prev_cuda is None:
+                os.environ.pop("CUDA_VISIBLE_DEVICES", None)
+            else:
+                os.environ["CUDA_VISIBLE_DEVICES"] = prev_cuda
+
+    np.save(out, np.asarray(labels, dtype=np.uint16))
+    return out
+
+
+def run_watershed(
+    image_path: Path,
+    out_dir: Path,
+    *,
+    sigma: float = 1.0,
+    min_distance_frac: float = 0.015,
+    min_object_size: int = 64,
+) -> Path:
+    """
+    Classical marker-controlled watershed on an Otsu foreground mask.
+
+    Markers are local maxima of the Euclidean distance transform; watershed
+    runs on the Sobel gradient inside the foreground mask.
+    """
+    from scipy import ndimage as ndi
+    from skimage import color, filters, morphology, segmentation
+    from skimage.feature import peak_local_max
+    from skimage.measure import label
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out = out_dir / "step04_masks_uint16.npy"
+    if out.is_file() and out.stat().st_size > 0:
+        arr = np.load(out)
+        if arr.ndim == 2 and int(arr.max()) > 0:
+            return out
+
+    rgb = np.asarray(Image.open(image_path).convert("RGB"))
+    gray = color.rgb2gray(rgb)
+    smoothed = filters.gaussian(gray, sigma=sigma, preserve_range=True).astype(np.float32)
+    binary = smoothed > filters.threshold_otsu(smoothed)
+    binary = morphology.opening(binary, morphology.disk(2))
+    binary = morphology.remove_small_objects(binary, max_size=min_object_size - 1)
+
+    distance = ndi.distance_transform_edt(binary)
+    min_dist = max(4, int(min(rgb.shape[:2]) * min_distance_frac))
+    coords = peak_local_max(
+        distance,
+        min_distance=min_dist,
+        labels=label(binary),
+    )
+    markers = np.zeros(distance.shape, dtype=np.int32)
+    for idx, (r, c) in enumerate(coords, start=1):
+        markers[r, c] = idx
+    if markers.max() == 0:
+        np.save(out, np.zeros(rgb.shape[:2], dtype=np.uint16))
+        return out
+
+    gradient = filters.sobel(smoothed)
+    labels = segmentation.watershed(gradient, markers, mask=binary)
+    np.save(out, np.asarray(labels, dtype=np.uint16))
+    return out
 
 
 def ihc_mask_to_instances(mask3: np.ndarray) -> np.ndarray:

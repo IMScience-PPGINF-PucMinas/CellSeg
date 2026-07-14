@@ -92,30 +92,19 @@ def colored_to_labels(rgb: np.ndarray, bg_thresh: int = 8) -> np.ndarray:
     return labels
 
 
-def mean_br_strict(gt: np.ndarray, pr: np.ndarray, margin: int = 8) -> float:
-    from percell_boundary_recall import (
-        bbox_of_mask,
-        compute_boundary_recall,
-        isolate_pred_for_gt,
-    )
+def mean_br_strict(
+    gt: np.ndarray,
+    pr: np.ndarray,
+    margin: int = 8,
+    *,
+    boundary_tolerance: int = 2,
+) -> float:
+    """Macro mean BR per GT instance at fixed tolerance (default 2 px, same as BR Area)."""
+    from boundary_fb_metric import mean_br_macro
 
-    vals: list[float] = []
-    h, w = gt.shape
-    for gid in np.unique(gt):
-        gid = int(gid)
-        if gid <= 0:
-            continue
-        m = gt == gid
-        r0, r1, c0, c1 = bbox_of_mask(m)
-        r0, c0 = max(0, r0 - margin), max(0, c0 - margin)
-        r1, c1 = min(h, r1 + margin), min(w, c1 + margin)
-        gt_crop = gt[r0:r1, c0:c1]
-        pr_crop = pr[r0:r1, c0:c1]
-        gt_iso = np.where(gt_crop == gid, gt_crop, 0)
-        pr_iso, _ = isolate_pred_for_gt(pr_crop, gt_crop, gid)
-        br, _, _ = compute_boundary_recall(pr_iso, gt_iso)
-        vals.append(float(br))
-    return float(np.mean(vals)) if vals else float("nan")
+    return mean_br_macro(
+        gt, pr, margin=margin, boundary_tolerance=boundary_tolerance
+    )
 
 
 def _append_csv_row(csv_path: Path, row: dict) -> None:

@@ -325,8 +325,12 @@ def _export_cellpose_and_diagnosis() -> None:
     """Copy benchmark panels for Cellpose comparison + per-cell + Nf sweep slides."""
     print("  cp2_* 2x2 tiles:")
     _export_cp_vs_sicle_2x2()
-    _copy_panel(CP_VS / "healthy_healthy-18-roi2_cellpose_vs_sicle.png", "cp_vs_sicle_healthy18.png")
     _copy_panel(CP_VS / "healthy_healthy-18-roi2_percell_winners.png", "percell_winners_healthy18.png")
+    sys.path.insert(0, str(REPO / "oral"))
+    from build_cellpose_vs_idisf_panels import build_percell_winners as _build_idisf_winners
+
+    _build_idisf_winners("healthy", "healthy-18-roi2", paper_name="cp_vs_idisf_healthy18.png")
+    _build_idisf_winners("severe", "severe-10-roi2", paper_name="cp_vs_idisf_severe10.png")
     from build_cellpose_vs_sicle_panels import export_percell_highlight
 
     print("  percell highlight:")
